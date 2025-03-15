@@ -1,0 +1,24 @@
+<html>
+<head>
+  <title>QR Image Decoder</title>
+</head>
+<body>
+    <h2>Upload QR Code Image</h2>
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="file" name="qrimage" required>
+        <button type="submit">Decode</button>
+    </form>
+    
+    {% if data %}
+        <h3>Decoded Data:</h3>
+        <pre>{{ data }}</pre>
+    {% endif %}
+    
+    {% if img_url %}
+        <h3>Decoded Image:</h3>
+        <img src="{{ img_url }}" alt="Decoded Image"/>
+    {% endif %}         
+
+</body>
+</html>
