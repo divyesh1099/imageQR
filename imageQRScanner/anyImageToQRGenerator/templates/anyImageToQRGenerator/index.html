@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Image to QR Code Compressor</title>
+</head>
+<body>
+    <h1>Upload an Image to Embed in a QR Code</h1>
+    {% if message %}
+        <p style="color: green;">{{ message }}</p>
+        <p>Compressed Image Format: {{ img_format }}</p>
+        <p>Compressed Size: {{ raw_size }} bytes</p>
+        <h2>Your QR Code:</h2>
+        <img src="{{ qr_code }}" alt="QR Code">
+    {% endif %}
+    {% if error %}
+        <p style="color: red;">{{ error }}</p>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label for="image">Select image:</label>
+        <input type="file" name="image" id="image" accept="image/*" required>
+        <button type="submit">Upload and Generate QR</button>
+    </form>
+</body>
+</html>
