@@ -1,7 +1,16 @@
 # QR Code Image Embedder and Decoder
 
 ## Overview
-This project demonstrates how to embed actual image data (BMP and PNG images) directly into QR codes using base64 encoding. It also provides a reliable decoding system to extract and render the embedded images via a Django web application. In addition, the system supports standard QR codes containing text data.
+This project demonstrates how to embed actual image data (BMP and PNG images) directly into QR codes using base64 encoding. It also provides a reliable decoding system to extract and render the embedded images via a Django web application. Additionally, a new route has been added to compress uploaded images until they fit within the QR code's data capacity, then generate and share the QR code. The system supports both image embedding and standard QR codes containing text data.
+
+---
+
+## Quick Input/Output Table
+
+| **Input Image** | **Generated QR Code** | **Decoded Output** |
+|-----------------|-----------------------|--------------------|
+| *(Input Image)* ![input_1 Image](input_1.png)| *(Generated QR Code)* ![input_1_qr Image](input_1_qr.png)| *(Decoded Image)* ![output_1](output_1.jpeg)|
+| *(Empty row for future images)* | *(Empty row for future images)* | *(Empty row for future images)* |
 
 ---
 
@@ -21,6 +30,9 @@ This project demonstrates how to embed actual image data (BMP and PNG images) di
   - Implemented QR code decoding using `pyzbar` and handled image processing with `PIL`.
   - Differentiated between textual data and embedded base64 image data.
   - Successfully detected and rendered BMP and PNG images embedded in the QR codes.
+  
+- **Image Compression & QR Generation Route**:
+  - Added a new Django route (`/anyImageToQRGenerator/`) to accept an image upload, compress it until its data size fits into a QR code, generate the QR code embedding the compressed image (in JPEG format), and display the QR code along with compression details.
 
 ---
 
@@ -34,6 +46,9 @@ This project demonstrates how to embed actual image data (BMP and PNG images) di
   
 - **Issue 3**: Handling differences in image formats.
   - **Resolution**: Utilized the `imghdr` module to reliably detect BMP, PNG, or JPEG images and render them correctly in the browser.
+  
+- **Issue 4**: AttributeError for `Image.ANTIALIAS` in Pillow.
+  - **Resolution**: Replaced `Image.ANTIALIAS` with `Image.LANCZOS` for high-quality image resizing.
 
 ---
 
@@ -81,8 +96,9 @@ This project demonstrates how to embed actual image data (BMP and PNG images) di
    python manage.py runserver
    ```
    
-3. **Access the Web App**:
-   - Open a web browser and visit `http://127.0.0.1:8000/` to upload a QR code image and view the decoded output.
+3. **Access the Web Apps**:
+   - For QR Code Decoding: Visit `http://127.0.0.1:8000/` (or your configured base URL) to upload a QR code image and view the decoded output.
+   - For Image Compression & QR Generation: Visit `http://127.0.0.1:8000/anyImageToQRGenerator/` to upload an image, compress it, and generate its QR code.
 
 ---
 
@@ -92,6 +108,7 @@ The application now:
 - Generates BMP and PNG images.
 - Correctly embeds these images into QR codes via base64 encoding.
 - Decodes QR codes reliably and displays the embedded images in the web app.
+- Compresses uploaded images as needed to fit within the QR code's capacity and generates the corresponding QR code.
 
 ---
 
@@ -99,11 +116,12 @@ The application now:
 
 - **Input**: 
   - Generated monochrome BMP or grayscale PNG images.
-  - Example images: `image.bmp` and `image.png`.
+  - Uploaded images via the new compression route.
   
 - **Embedded QR Codes**:
   - QR Code with BMP data: `qr_with_bmp.png`
   - QR Code with PNG data: `qr_with_png.png`
+  - QR Code from compressed image via `/anyImageToQRGenerator/`
   
 - **Output**:
   - Decoded images are rendered on the web interface via an HTML `<img>` tag.
@@ -206,4 +224,143 @@ def index(request):
             context['data'] = 'No QR code detected.'
 
     return render(request, 'imageQRApp/index.html', context)
+```
+
+### Image Compression & QR Generation: New Route (`/anyImageToQRGenerator/`)
+
+**URLs Configuration (`anyImageToQRGenerator/urls.py`):**
+
+```python
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('', views.compress_and_qr, name='compress_and_qr'),
+]
+```
+
+**View Function (`anyImageToQRGenerator/views.py`):**
+
+```python
+import io
+import base64
+import qrcode
+from PIL import Image
+from django.shortcuts import render
+
+# Maximum raw data bytes allowed after compression (approximate, after base64 overhead)
+MAX_RAW_BYTES = 2220
+
+def compress_image(image, target_size=MAX_RAW_BYTES):
+    """
+    Compress the image iteratively by reducing quality and size until it fits under target_size.
+    Returns a tuple of (compressed_image_bytes, final_format).
+    """
+    img_format = 'JPEG'  # using JPEG as a good compromise for compression
+    quality = 85  # starting quality
+    
+    # Use BytesIO to store compressed image
+    compressed_io = io.BytesIO()
+    
+    # Initial save
+    image.save(compressed_io, format=img_format, quality=quality)
+    size = compressed_io.tell()
+    
+    # Iteratively reduce quality until the compressed image size fits under target_size
+    while size > target_size and quality > 10:
+        quality -= 10
+        compressed_io.seek(0)
+        compressed_io.truncate(0)
+        image.save(compressed_io, format=img_format, quality=quality)
+        size = compressed_io.tell()
+    
+    # If still too large, try resizing the image
+    while size > target_size:
+        # Reduce size by 20%
+        new_width = int(image.width * 0.8)
+        new_height = int(image.height * 0.8)
+        # Use Image.LANCZOS for high-quality downsampling
+        image = image.resize((new_width, new_height), Image.LANCZOS)
+        compressed_io.seek(0)
+        compressed_io.truncate(0)
+        image.save(compressed_io, format=img_format, quality=quality)
+        size = compressed_io.tell()
+    
+    return compressed_io.getvalue(), img_format.lower()
+
+def generate_qr_code(data):
+    """
+    Generates a QR code image from the provided base64-encoded data.
+    """
+    qr = qrcode.QRCode(
+        version=40,
+        error_correction=qrcode.constants.ERROR_CORRECT_L
+    )
+    qr.add_data(data, optimize=0)
+    qr.make()
+    qr_img = qr.make_image(fill_color="black", back_color="white")
+    # Save QR code image to BytesIO
+    qr_buffer = io.BytesIO()
+    qr_img.save(qr_buffer, format="PNG")
+    qr_buffer.seek(0)
+    return qr_buffer.getvalue()
+
+def compress_and_qr(request):
+    context = {}
+    if request.method == 'POST' and request.FILES.get('image'):
+        uploaded_file = request.FILES['image']
+        try:
+            # Open the uploaded image using Pillow
+            image = Image.open(uploaded_file)
+        except Exception as e:
+            context['error'] = f"Error opening image: {str(e)}"
+            return render(request, 'anyImageToQRGenerator/index.html', context)
+        
+        # Compress the image until it fits into the QR code capacity.
+        compressed_data, img_format = compress_image(image)
+        raw_size = len(compressed_data)
+        
+        # Encode the compressed image to a base64 string.
+        b64_data = base64.b64encode(compressed_data).decode('ascii')
+        
+        # Generate the QR code image embedding the base64 string.
+        qr_data = generate_qr_code(b64_data)
+        qr_b64 = base64.b64encode(qr_data).decode('utf-8')
+        
+        context['qr_code'] = f"data:image/png;base64,{qr_b64}"
+        context['raw_size'] = raw_size
+        context['img_format'] = img_format.upper()
+        context['message'] = "Image successfully compressed and embedded in QR code."
+    return render(request, 'anyImageToQRGenerator/index.html', context)
+```
+
+**Template (`anyImageToQRGenerator/templates/anyImageToQRGenerator/index.html`):**
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Image to QR Code Compressor</title>
+</head>
+<body>
+    <h1>Upload an Image to Generate a QR Code</h1>
+    {% if message %}
+        <p style="color: green;">{{ message }}</p>
+        <p>Compressed Image Format: {{ img_format }}</p>
+        <p>Compressed Size: {{ raw_size }} bytes</p>
+        <h2>Your QR Code:</h2>
+        <img src="{{ qr_code }}" alt="QR Code">
+    {% endif %}
+    {% if error %}
+        <p style="color: red;">{{ error }}</p>
+    {% endif %}
+    <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label for="image">Select image:</label>
+        <input type="file" name="image" id="image" accept="image/*" required>
+        <button type="submit">Upload and Generate QR</button>
+    </form>
+</body>
+</html>
 ```
